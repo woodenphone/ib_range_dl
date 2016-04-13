@@ -60,8 +60,8 @@ def save_submissions(requests_session, sid, submission_ids, output_path):
     """
     Save one Inkbunny submission through the API
     Output to:
-        <output_path>/submission_id.json
-        <output_path>/submission_id.file_name
+        <output_path>/<submission_id>.json
+        <output_path>/<submission_id>.<file_number>.<file_name>
     """
     if (submission_ids is type(1)):
         submission_ids = [submission_ids]
@@ -79,21 +79,22 @@ def save_submissions(requests_session, sid, submission_ids, output_path):
     submission_info_url = 'https://inkbunny.net/api_submissions.php?sid=%s&submission_ids=%s' % (sid, submission_ids_string)
     submission_info_response = fetch(requests_session, submission_info_url)
     results = json.loads(submission_info_response.text)
-    print('results: %s' % (results))
+    #print('results: %s' % (results))
 
+    assert(len(results['submissions']) == len(submission_ids))
     # Save each submission
     for submission_info in results['submissions']:
         submission_id = submission_info['submission_id']
 
         # Save files
         for submission_file in submission_info['files']:
-            print('submission_file: %s' % (submission_file))
+            #print('submission_file: %s' % (submission_file))
             file_full_url = submission_file['file_url_full']
             original_file_name = submission_file['file_name']
             file_order = submission_file['submission_file_order']
             download_filepath = os.path.join(output_path, '%s.%s.%s' % (submission_id, file_order, original_file_name))
             assert not os.path.exists(download_filepath)
-            urllib.urlretrieve(file_full_url, download_filepath)
+            urllib.urlretrieve(file_full_url, download_filepath)#TODO Replace this call with something better
 ##            file_full_response = fetch(requests_session, file_full_url)
 ##            with open(download_filepath, 'w') as f:
 ##                # http://stackoverflow.com/questions/13137817/how-to-download-image-using-requests
@@ -180,7 +181,7 @@ def main():
             print('low_id: %s, high_id: %s' % (low_id, high_id))
             # Populate groups of 100
             nums = list(range(int(low_id), int(high_id) + 1))# populate the list with numbers from x to x+99
-            print(nums)
+            #print(nums)
             assert(len(nums) <= 100)#
             save_submissions(requests_session,
                 sid=sid,
