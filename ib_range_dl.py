@@ -20,7 +20,8 @@ import argparse
 import sys
 import shutil
 import urllib
-
+import hashlib# Needed to hash file data
+import base64 # Needed to do base32 encoding of filenames
 
 def print_(*args, **kwargs):
     print(*args, **kwargs)
@@ -56,6 +57,22 @@ def fetch(requests_session, url, method='get', data=None, expect_status=200, hea
     raise Exception('Giving up!')
 
 
+def hash_file(file_path):
+    #http://stackoverflow.com/questions/30478972/hashing-files-with-python
+    assert(os.path.exists(file_path))
+    blocksize = 65536
+    with open(file_path, "rb") as f:
+        hasher = hashlib.md5()
+        buf = f.read(blocksize)
+        while len(buf)>0:
+            hasher.update(buf)
+            buf = f.read(blocksize)
+        raw_hash =  hasher.digest()
+    md5_base16_hash = base64.b16encode(raw_hash)
+    md5_base16_hash_lowercase = md5_base16_hash.lower()
+    return md5_base16_hash_lowercase
+
+
 def save_submissions(requests_session, sid, submission_ids, output_path):
     """
     Save one Inkbunny submission through the API
@@ -81,7 +98,9 @@ def save_submissions(requests_session, sid, submission_ids, output_path):
     results = json.loads(submission_info_response.text)
     #print('results: %s' % (results))
 
-    assert(len(results['submissions']) == len(submission_ids))
+##    if not (len(results['submissions']) == len(submission_ids)):
+##        with open('resp.txt', 'w') as f:
+##            f.write(repr(results))
     # Save each submission
     for submission_info in results['submissions']:
         submission_id = submission_info['submission_id']
@@ -92,9 +111,15 @@ def save_submissions(requests_session, sid, submission_ids, output_path):
             file_full_url = submission_file['file_url_full']
             original_file_name = submission_file['file_name']
             file_order = submission_file['submission_file_order']
+            remote_file_hash = submission_file['full_file_md5']
             download_filepath = os.path.join(output_path, '%s.%s.%s' % (submission_id, file_order, original_file_name))
+            print('Now saving file: %s to %s' % (file_full_url, download_filepath))
+
             assert not os.path.exists(download_filepath)
             urllib.urlretrieve(file_full_url, download_filepath)#TODO Replace this call with something better
+            local_file_hash = hash_file(download_filepath)
+            if local_file_hash != remote_file_hash:
+                raise Exception('Local and remote hashes for this file did not match!\r\n local_file_hash: %s\r\nremote_file_hash: %s' % (local_file_hash, remote_file_hash))
 ##            file_full_response = fetch(requests_session, file_full_url)
 ##            with open(download_filepath, 'w') as f:
 ##                # http://stackoverflow.com/questions/13137817/how-to-download-image-using-requests
