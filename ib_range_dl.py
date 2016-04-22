@@ -57,6 +57,31 @@ def fetch(requests_session, url, method='get', data=None, expect_status=200, hea
     raise Exception('Giving up!')
 
 
+def appendlist(lines,list_file_path="tumblr_done_list.txt",initial_text="# List of completed items.\n"):
+    # Append a string or list of strings to a file; If no file exists, create it and append to the new file.
+    # Strings will be seperated by newlines.
+    # Make sure we're saving a list of strings.
+    if ((type(lines) is type(""))or (type(lines) is type(u""))):
+        lines = [lines]
+    # Ensure file exists.
+    if not os.path.exists(list_file_path):
+        list_file_segments = os.path.split(list_file_path)
+        list_dir = list_file_segments[0]
+        if list_dir:
+            if not os.path.exists(list_dir):
+                os.makedirs(list_dir)
+        nf = open(list_file_path, "w")
+        nf.write(initial_text)
+        nf.close()
+    # Write data to file.
+    f = open(list_file_path, "a")
+    for line in lines:
+        outputline = line+"\n"
+        f.write(outputline)
+    f.close()
+    return
+
+
 def hash_file(file_path):
     #http://stackoverflow.com/questions/30478972/hashing-files-with-python
     assert(os.path.exists(file_path))
@@ -73,7 +98,7 @@ def hash_file(file_path):
     return md5_base16_hash_lowercase
 
 
-def save_submissions(requests_session, sid, submission_ids, output_path):
+def save_submissions(requests_session, sid, submission_ids, output_path, download=True, save_json=True, download_link_filepath=None):
     """
     Save one Inkbunny submission through the API
     Output to:
@@ -97,40 +122,47 @@ def save_submissions(requests_session, sid, submission_ids, output_path):
     submission_info_response = fetch(requests_session, submission_info_url)
     results = json.loads(submission_info_response.text)
     #print('results: %s' % (results))
-
-##    if not (len(results['submissions']) == len(submission_ids)):
-##        with open('resp.txt', 'w') as f:
-##            f.write(repr(results))
-    # Save each submission
+    # Handle submissions
     for submission_info in results['submissions']:
+        # Handle one submission
         submission_id = submission_info['submission_id']
 
-        # Save files
+        # Handle submission files
         for submission_file in submission_info['files']:
             #print('submission_file: %s' % (submission_file))
             file_full_url = submission_file['file_url_full']
             original_file_name = submission_file['file_name']
             file_order = submission_file['submission_file_order']
             remote_file_hash = submission_file['full_file_md5']
-            download_filepath = os.path.join(output_path, '%s.%s.%s' % (submission_id, file_order, original_file_name))
-            print('Now saving file: %s to %s' % (file_full_url, download_filepath))
+            if download_link_filepath:
+                # Write download link to file
+                appendlist(
+                    lines = file_full_url,
+                    list_file_path = download_link_filepath,
+                    initial_text = "# List of download links.\r\n"
+                )
 
-            assert not os.path.exists(download_filepath)
-            urllib.urlretrieve(file_full_url, download_filepath)#TODO Replace this call with something better
-            local_file_hash = hash_file(download_filepath)
-            if local_file_hash != remote_file_hash:
-                raise Exception('Local and remote hashes for this file did not match!\r\n local_file_hash: %s\r\nremote_file_hash: %s' % (local_file_hash, remote_file_hash))
-##            file_full_response = fetch(requests_session, file_full_url)
-##            with open(download_filepath, 'w') as f:
-##                # http://stackoverflow.com/questions/13137817/how-to-download-image-using-requests
-##                #shutil.copyfileobj(file_full_response.raw, f)
-##                f.write(file_full_response.content)
+            if download:
+                # Download file
+                download_filepath = os.path.join(output_path, '%s.%s.%s' % (submission_id, file_order, original_file_name))
+                print('Now saving file: %s to %s' % (file_full_url, download_filepath))
 
-        # Save JSON
-        json_filepath = os.path.join(output_path, '%s.json' % (submission_id))
-        assert not os.path.exists(json_filepath)
-        with open(json_filepath, 'w') as f:
-            json.dump(submission_info, f)
+                assert not os.path.exists(download_filepath)
+                urllib.urlretrieve(file_full_url, download_filepath)#TODO Replace this call with something better
+                local_file_hash = hash_file(download_filepath)
+                if local_file_hash != remote_file_hash:
+                    raise Exception('Local and remote hashes for this file did not match!\r\n local_file_hash: %s\r\nremote_file_hash: %s' % (local_file_hash, remote_file_hash))
+    ##            file_full_response = fetch(requests_session, file_full_url)
+    ##            with open(download_filepath, 'w') as f:
+    ##                # http://stackoverflow.com/questions/13137817/how-to-download-image-using-requests
+    ##                #shutil.copyfileobj(file_full_response.raw, f)
+    ##                f.write(file_full_response.content)
+        if save_json:
+            # Save JSON
+            json_filepath = os.path.join(output_path, '%s.json' % (submission_id))
+            assert not os.path.exists(json_filepath)
+            with open(json_filepath, 'w') as f:
+                json.dump(submission_info, f)
 
 
 
@@ -168,15 +200,20 @@ def main():
                     type=str)
     parser.add_argument('output_path', help='Output path',
                     type=str, default='download')
+##    parser.add_argument('--make_list', help='write file URLs to a list file',
+##                    type=str, default=False)
+##    parser.add_argument('--skip_download', help='skip downloading',action="store_true")
     args = parser.parse_args()
     login_username = args.username
     login_password = args.password
     start_num = args.start_num
     end_num = args.end_num
     output_path = args.output_path
+
     # Setup requests session
     requests_session = requests.Session()
     requests_session.cookies = cookie_jar = cookielib.MozillaCookieJar('cookies.txt')
+
     # Log in
     sid = inkbunny_api_login(requests_session,
         login_username,
@@ -188,15 +225,20 @@ def main():
     if start_num > end_num:# Handle case where beginning is greater than end
         start_num, end_num = end_num, start_num
 
-    if start_num == end_num:# Handle case of only one submission to save
+    if start_num == end_num:
+        # Handle case of only one submission to save
         nums = [start_num]
         save_submissions(requests_session,
             sid=sid,
             submission_ids=nums,
             output_path=output_path,
+            download=True,# TODO add this CLI argument
+            save_json=True,# TODO add this CLI argument
+            download_link_filepath='download_links.txt'# TODO add this CLI argument
         )
 
-    else:# Process range of submissions
+    else:
+        # Process range of submissions
         # Break up range into groups of 100
         for low_id in xrange(start_num, end_num, 100):
             # Start with a number x

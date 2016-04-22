@@ -3,3 +3,4 @@ download/
 data/
 *.pyc
 logins.py
+download_links.txt
