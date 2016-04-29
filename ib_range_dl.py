@@ -22,6 +22,69 @@ import shutil
 import urllib
 import hashlib# Needed to hash file data
 import base64 # Needed to do base32 encoding of filenames
+import logging
+import logging.handlers
+import datetime
+
+
+
+def setup_logging(log_file_path,timestamp_filename=True,max_log_size=104857600):
+    """Setup logging (Before running any other code)
+    http://inventwithpython.com/blog/2012/04/06/stop-using-print-for-debugging-a-5-minute-quickstart-guide-to-pythons-logging-module/
+    """
+    assert( len(log_file_path) > 1 )
+    assert( type(log_file_path) == type("") )
+    global logger
+
+    # Make sure output dir(s) exists
+    log_file_folder =  os.path.dirname(log_file_path)
+    if log_file_folder is not None:
+        if not os.path.exists(log_file_folder):
+            os.makedirs(log_file_folder)
+
+    # Add timetamp for filename if needed
+    if timestamp_filename:
+        # http://stackoverflow.com/questions/8472413/add-utc-time-to-filename-python
+        # '2015-06-30-13.44.15'
+        timestamp_string = datetime.datetime.utcnow().strftime("%Y-%m-%d %H.%M.%S%Z")
+        # Full log
+        log_file_path = add_timestamp_to_log_filename(log_file_path,timestamp_string)
+
+    logger = logging.getLogger()
+    logger.setLevel(logging.DEBUG)
+    # 2015-07-21 18:56:23,428 - t.11028 - INFO - ln.156 - Loading page 0 of posts for u'mlpgdraws.tumblr.com'
+    formatter = logging.Formatter("%(asctime)s - t.%(thread)d - %(levelname)s - ln.%(lineno)d - %(message)s")
+
+    # File 1, log everything
+    # https://docs.python.org/2/library/logging.handlers.html
+    # Rollover occurs whenever the current log file is nearly maxBytes in length; if either of maxBytes or backupCount is zero, rollover never occurs.
+    fh = logging.handlers.RotatingFileHandler(
+        filename=log_file_path,
+        # https://en.wikipedia.org/wiki/Binary_prefix
+        # 104857600 100MiB
+        maxBytes=max_log_size,
+        backupCount=10000,# Ten thousand should be enough to crash before we reach it.
+        )
+    fh.setLevel(logging.DEBUG)
+    fh.setFormatter(formatter)
+    logger.addHandler(fh)
+
+    # Console output
+    ch = logging.StreamHandler()
+    ch.setLevel(logging.DEBUG)
+    ch.setFormatter(formatter)
+    logger.addHandler(ch)
+
+    logging.info("Logging started.")
+    return logger
+
+
+def add_timestamp_to_log_filename(log_file_path,timestamp_string):
+    """Insert a string before a file extention"""
+    base, ext = os.path.splitext(log_file_path)
+    return base+"_"+timestamp_string+ext
+
+
 
 def print_(*args, **kwargs):
     print(*args, **kwargs)
@@ -47,7 +110,7 @@ def fetch(requests_session, url, method='get', data=None, expect_status=200, hea
 
         print_(str(response.status_code))
 
-        if response.status_code != expect_status and not ok_text_found:
+        if response.status_code != expect_status:
             print_('Problem detected. Sleeping.')
             time.sleep(60)
         else:
@@ -55,6 +118,41 @@ def fetch(requests_session, url, method='get', data=None, expect_status=200, hea
             return response
 
     raise Exception('Giving up!')
+
+
+def save_file(file_path,data,force_save=False,allow_fail=False):
+    counter = 0
+    while counter <= 10:
+        counter += 1
+
+        if not force_save:
+            if os.path.exists(file_path):
+                logging.debug("save_file()"" File already exists! "+repr(file_path))
+                return
+        foldername = os.path.dirname(file_path)
+        if len(foldername) != 0:
+            if not os.path.exists(foldername):
+                try:
+                    os.makedirs(foldername)
+                except WindowsError, err:
+                    pass
+        try:
+            file = open(file_path, "wb")
+            file.write(data)
+            file.close()
+            return
+        except IOError, err:
+            logging.exception(err)
+            logging.error(repr(file_path))
+            time.sleep(1)
+            continue
+    logging.warning("save_file() Too many failed write attempts! "+repr(file_path))
+    if allow_fail:
+        return
+    else:
+        logging.critical("save_file() Passing on exception")
+        logging.critical(repr(file_path))
+        raise
 
 
 def appendlist(lines,list_file_path="tumblr_done_list.txt",initial_text="# List of completed items.\n"):
@@ -145,18 +243,24 @@ def save_submissions(requests_session, sid, submission_ids, output_path, downloa
             if download:
                 # Download file
                 download_filepath = os.path.join(output_path, '%s.%s.%s' % (submission_id, file_order, original_file_name))
-                print('Now saving file: %s to %s' % (file_full_url, download_filepath))
+                logging.info('Now saving file: %s to %s' % (file_full_url, download_filepath))
 
                 assert not os.path.exists(download_filepath)
-                urllib.urlretrieve(file_full_url, download_filepath)#TODO Replace this call with something better
+
+                file_full_response = fetch(requests_session, file_full_url)
+                file_full_data = file_full_response.content
+
+                save_file(
+                    file_path = download_filepath,
+                    data = file_full_data,
+                    force_save=True,
+                    allow_fail=False
+                )
+
                 local_file_hash = hash_file(download_filepath)
                 if local_file_hash != remote_file_hash:
                     raise Exception('Local and remote hashes for this file did not match!\r\n local_file_hash: %s\r\nremote_file_hash: %s' % (local_file_hash, remote_file_hash))
-    ##            file_full_response = fetch(requests_session, file_full_url)
-    ##            with open(download_filepath, 'w') as f:
-    ##                # http://stackoverflow.com/questions/13137817/how-to-download-image-using-requests
-    ##                #shutil.copyfileobj(file_full_response.raw, f)
-    ##                f.write(file_full_response.content)
+
         if save_json:
             # Save JSON
             json_filepath = os.path.join(output_path, '%s.json' % (submission_id))
@@ -185,9 +289,7 @@ def inkbunny_api_login(requests_session, login_username, login_password):
     return sid
 
 
-
-
-def main():
+def run_cli():
     # Handle command line args
     parser = argparse.ArgumentParser()
     parser.add_argument('start_num', help='low end of the range to work over',
@@ -198,8 +300,8 @@ def main():
                     type=str)
     parser.add_argument('password', help='Inkbunny account password',
                     type=str)
-    parser.add_argument('output_path', help='Output path',
-                    type=str, default='download')
+##    parser.add_argument('output_path', help='Output path',
+##                    type=str, default='download')
 ##    parser.add_argument('--make_list', help='write file URLs to a list file',
 ##                    type=str, default=False)
 ##    parser.add_argument('--skip_download', help='skip downloading',action="store_true")
@@ -208,7 +310,8 @@ def main():
     login_password = args.password
     start_num = args.start_num
     end_num = args.end_num
-    output_path = args.output_path
+    #output_path = args.output_path
+    output_path='download'
 
     # Setup requests session
     requests_session = requests.Session()
@@ -224,6 +327,7 @@ def main():
     start_num, end_num = abs(start_num), abs(end_num)# Prevent negatives
     if start_num > end_num:# Handle case where beginning is greater than end
         start_num, end_num = end_num, start_num
+    logging.info('start_num: %s, end_num: %s ' % (start_num, end_num))
 
     if start_num == end_num:
         # Handle case of only one submission to save
@@ -245,7 +349,7 @@ def main():
             high_id = low_id + 99# Add 99 to the number x
             if high_id > end_num:# If the number x+99 is above the maximum, subtract the difference
                 high_id -= (high_id - end_num)
-            print('low_id: %s, high_id: %s' % (low_id, high_id))
+            logging.info('low_id: %s, high_id: %s' % (low_id, high_id))
             # Populate groups of 100
             nums = list(range(int(low_id), int(high_id) + 1))# populate the list with numbers from x to x+99
             #print(nums)
@@ -255,6 +359,16 @@ def main():
                 submission_ids=nums,
                 output_path=output_path,
             )
+    return
+
+
+def main():
+    try:
+        setup_logging(log_file_path=os.path.join('debug','ib_range_dl_log.txt'))
+        run_cli()
+    except Exception, e:# Log fatal exceptions
+        logging.critical("Unhandled exception!")
+        logging.exception(e)
 
 
 

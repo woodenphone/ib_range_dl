@@ -1,6 +1,7 @@
 *~
 download/
 data/
+debug/
 *.pyc
 logins.py
 download_links.txt
