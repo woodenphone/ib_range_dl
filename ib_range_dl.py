@@ -93,7 +93,7 @@ def print_(*args, **kwargs):
 
 def fetch(requests_session, url, method='get', data=None, expect_status=200, headers=None):
 #    headers = {'user-agent': user_agent}
-    headers = {'user-agent': 'test'}
+    headers = {'user-agent': 'https://github.com/woodenphone/ib_range_dl'}
 
     if headers:
         headers.update(headers)
